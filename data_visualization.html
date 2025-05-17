@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Data Visualization</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.0/papaparse.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            margin-top: 0;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 30px;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        select, input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4a6cf7;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #3a5ce5;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4a6cf7;
+            margin: 5px 0;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+        }
+        .peaks-container {
+            margin-top: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            font-size: 18px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV Data Visualization</h1>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="file-input">Upload CSV File:</label>
+                <input type="file" id="file-input" accept=".csv">
+            </div>
+            <div class="control-group">
+                <label for="x-axis">X-Axis:</label>
+                <select id="x-axis"></select>
+            </div>
+            <div class="control-group">
+                <label for="y-axis">Y-Axis:</label>
+                <select id="y-axis"></select>
+            </div>
+            <div class="control-group">
+                <label for="window-size">Rolling Average Window Size:</label>
+                <input type="number" id="window-size" min="2" value="5">
+            </div>
+            <div class="control-group">
+                <label for="peak-height">Minimum Peak Height:</label>
+                <input type="number" id="peak-height" min="0" step="0.01" value="0.1">
+            </div>
+            <div class="control-group">
+                <button id="process-btn">Process Data</button>
+            </div>
+        </div>
+        
+        <div id="stats" class="stats">
+            <!-- Statistics will be inserted here -->
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="data-chart"></canvas>
+        </div>
+        
+        <div class="peaks-container">
+            <h2>Detected Peaks</h2>
+            <table id="peaks-table">
+                <thead>
+                    <tr>
+                        <th>Index</th>
+                        <th>X Value</th>
+                        <th>Y Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Peak data will be inserted here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let csvData = [];
+        let headers = [];
+        let dataChart = null;
+        
+        // DOM elements
+        const fileInput = document.getElementById('file-input');
+        const xAxisSelect = document.getElementById('x-axis');
+        const yAxisSelect = document.getElementById('y-axis');
+        const windowSizeInput = document.getElementById('window-size');
+        const peakHeightInput = document.getElementById('peak-height');
+        const processBtn = document.getElementById('process-btn');
+        const statsContainer = document.getElementById('stats');
+        const peaksTable = document.getElementById('peaks-table').querySelector('tbody');
+        
+        // Initialize chart
+        const ctx = document.getElementById('data-chart').getContext('2d');
+        
+        // Event listeners
+        fileInput.addEventListener('change', handleFileUpload);
+        processBtn.addEventListener('click', processData);
+        
+        // Handle file upload
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Parse CSV file
+            Papa.parse(file, {
+                header: true,
+                dynamicTyping: true,
+                complete: function(results) {
+                    csvData = results.data.filter(row => Object.values(row).some(val => val !== null));
+                    headers = Object.keys(results.data[0]);
+                    
+                    // Populate dropdowns
+                    populateDropdowns();
+                    
+                    // Process data automatically
+                    processData();
+                }
+            });
+        }
+        
+        // Populate dropdown options
+        function populateDropdowns() {
+            xAxisSelect.innerHTML = '';
+            yAxisSelect.innerHTML = '';
+            
+            headers.forEach(header => {
+                const xOption = document.createElement('option');
+                xOption.value = header;
+                xOption.textContent = header;
+                xAxisSelect.appendChild(xOption);
+                
+                const yOption = document.createElement('option');
+                yOption.value = header;
+                yOption.textContent = header;
+                yAxisSelect.appendChild(yOption);
+            });
+            
+            // Set default selections
+            if (headers.includes('time')) {
+                xAxisSelect.value = 'time';
+            }
+            
+            if (headers.includes('voltage')) {
+                yAxisSelect.value = 'voltage';
+            } else if (headers.length > 1) {
+                yAxisSelect.value = headers[1];
+            }
+        }
+        
+        // Process data and update visualizations
+        function processData() {
+            if (csvData.length === 0) return;
+            
+            const xAxis = xAxisSelect.value;
+            const yAxis = yAxisSelect.value;
+            const windowSize = parseInt(windowSizeInput.value);
+            const minPeakHeight = parseFloat(peakHeightInput.value);
+            
+            // Calculate statistics
+            updateStatistics(xAxis, yAxis);
+            
+            // Calculate rolling average
+            const rollingAvgData = calculateRollingAverage(csvData, yAxis, windowSize);
+            
+            // Detect peaks
+            const peaks = detectPeaks(csvData, xAxis, yAxis, minPeakHeight);
+            
+            // Update chart
+            updateChart(xAxis, yAxis, rollingAvgData, peaks);
+            
+            // Update peaks table
+            updatePeaksTable(peaks, xAxis, yAxis);
+        }
+        
+        // Calculate basic statistics
+        function updateStatistics(xAxis, yAxis) {
+            const yValues = csvData.map(row => row[yAxis]).filter(val => !isNaN(val));
+            
+            if (yValues.length === 0) {
+                statsContainer.innerHTML = '<div class="stat-card"><div class="stat-label">No valid data</div></div>';
+                return;
+            }
+            
+            const min = Math.min(...yValues);
+            const max = Math.max(...yValues);
+            const sum = yValues.reduce((acc, val) => acc + val, 0);
+            const mean = sum / yValues.length;
+            
+            // Calculate standard deviation
+            const squaredDiffs = yValues.map(val => Math.pow(val - mean, 2));
+            const variance = squaredDiffs.reduce((acc, val) => acc + val, 0) / yValues.length;
+            const stdDev = Math.sqrt(variance);
+            
+            statsContainer.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-label">Min ${yAxis}</div>
+                    <div class="stat-value">${min.toFixed(4)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Max ${yAxis}</div>
+                    <div class="stat-value">${max.toFixed(4)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Mean ${yAxis}</div>
+                    <div class="stat-value">${mean.toFixed(4)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Standard Deviation</div>
+                    <div class="stat-value">${stdDev.toFixed(4)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Data Points</div>
+                    <div class="stat-value">${yValues.length}</div>
+                </div>
+            `;
+        }
+        
+        // Calculate rolling average
+        function calculateRollingAverage(data, field, windowSize) {
+            const result = [];
+            
+            for (let i = 0; i < data.length; i++) {
+                let sum = 0;
+                let count = 0;
+                
+                // Look back and forward half the window size
+                const halfWindow = Math.floor(windowSize / 2);
+                for (let j = Math.max(0, i - halfWindow); j <= Math.min(data.length - 1, i + halfWindow); j++) {
+                    if (!isNaN(data[j][field])) {
+                        sum += data[j][field];
+                        count++;
+                    }
+                }
+                
+                const avg = count > 0 ? sum / count : NaN;
+                result.push({...data[i], [`${field}_rolling`]: avg});
+            }
+            
+            return result;
+        }
+        
+        // Detect peaks in the data
+        function detectPeaks(data, xField, yField, minHeight) {
+            const peaks = [];
+            
+            for (let i = 1; i < data.length - 1; i++) {
+                const prev = data[i-1][yField];
+                const current = data[i][yField];
+                const next = data[i+1][yField];
+                
+                // Check if this is a peak
+                if (!isNaN(current) && !isNaN(prev) && !isNaN(next) &&
+                    current > prev && current > next && current >= minHeight) {
+                    peaks.push({
+                        index: i,
+                        x: data[i][xField],
+                        y: current
+                    });
+                }
+            }
+            
+            return peaks;
+        }
+        
+        // Update the chart with new data
+        function updateChart(xField, yField, rollingAvgData, peaks) {
+            // Destroy previous chart if it exists
+            if (dataChart) {
+                dataChart.destroy();
+            }
+            
+            // Prepare datasets
+            const datasets = [
+                {
+                    label: yField,
+                    data: csvData.map(row => ({
+                        x: row[xField],
+                        y: row[yField]
+                    })),
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    pointRadius: 0,
+                    borderWidth: 1
+                },
+                {
+                    label: `${yField} (Rolling Avg)`,
+                    data: rollingAvgData.map(row => ({
+                        x: row[xField],
+                        y: row[`${yField}_rolling`]
+                    })),
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    pointRadius: 0,
+                    borderWidth: 2
+                },
+                {
+                    label: 'Peaks',
+                    data: peaks.map(peak => ({
+                        x: peak.x,
+                        y: peak.y
+                    })),
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 1)',
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    showLine: false
+                }
+            ];
+            
+            // Create new chart
+            dataChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            position: 'bottom',
+                            title: {
+                                display: true,
+                                text: xField
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: yField
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.dataset.label || '';
+                                    const value = context.parsed.y;
+                                    return `${label}: ${value.toFixed(4)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update the peaks table
+        function updatePeaksTable(peaks, xField, yField) {
+            peaksTable.innerHTML = '';
+            
+            if (peaks.length === 0) {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td colspan="3">No peaks detected</td>`;
+                peaksTable.appendChild(row);
+                return;
+            }
+            
+            peaks.forEach(peak => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${peak.index}</td>
+                    <td>${peak.x.toFixed(4)}</td>
+                    <td>${peak.y.toFixed(4)}</td>
+                `;
+                peaksTable.appendChild(row);
+            });
+        }
+        
+        // Load test.csv automatically if available
+        fetch('test.csv')
+            .then(response => response.text())
+            .then(csvText => {
+                const results = Papa.parse(csvText, {
+                    header: true,
+                    dynamicTyping: true
+                });
+                
+                csvData = results.data.filter(row => Object.values(row).some(val => val !== null));
+                headers = Object.keys(results.data[0]);
+                
+                populateDropdowns();
+                processData();
+            })
+            .catch(error => {
+                console.error('Error loading test.csv:', error);
+            });
+    </script>
+</body>
+</html>
