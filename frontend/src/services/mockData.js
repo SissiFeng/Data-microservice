@@ -304,6 +304,26 @@ export const mockProcessFile = async (fileId, params) => {
       }
     };
   }
+  else if (params.processing_type === 'custom') {
+    // For custom processing, acknowledge the script name and parameters
+    const customScriptName = params.parameters?.custom_script_name || 'unknown_script';
+    const customParams = params.parameters?.custom_params || {};
+    
+    return {
+      id: 'pr-' + Math.random().toString(36).substr(2, 9),
+      data_file_id: fileId,
+      processing_type: 'custom',
+      parameters: params.parameters || {},
+      status: 'completed', // Simulate completion for mock
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      result_data: {
+        message: `Mock custom processing for script '${customScriptName}' completed.`,
+        input_parameters: customParams,
+        original_file_data_sample: fileData.slice(0, 5) // Include a sample of original data
+      }
+    };
+  }
 
   // Default fallback
   return {
@@ -320,6 +340,22 @@ export const mockAddAnnotation = async (fileId, annotation) => {
   return {
     id: uuidv4(),
     ...annotation
+  };
+};
+
+// Mock Optimizer Run
+export const mockRunOptimizer = async (request) => {
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  return {
+    optimizer_run_id: uuidv4(),
+    status: "simulated_mock_complete",
+    input_processing_result_id: request.processing_result_id,
+    results: {
+      message: "Optimizer run simulated in mock mode.",
+      params_received: request.optimizer_params,
+      mock_optimized_value: Math.random() * 100,
+    },
+    message: "Mock optimization run completed successfully."
   };
 };
 

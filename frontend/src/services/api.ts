@@ -4,8 +4,10 @@ import {
   mockGetFiles,
   mockProcessFile,
   mockAddAnnotation,
-  mockExportData
+  mockExportData,
+  mockRunOptimizer // Added for mock mode
 } from './mockData.js';
+import { OptimizerRequest, OptimizerResponse } from '../types'; // Added
 
 // Flag to enable mock mode when backend is unavailable
 let useMockData = true; // Always use mock data for now
@@ -319,6 +321,28 @@ export const annotationsApi = {
     const response = await api.delete(`/annotations/${annotationId}`);
     return response.data;
   },
+};
+
+// Optimizer API
+export const optimizerApi = {
+  runOptimizer: async (request: OptimizerRequest): Promise<OptimizerResponse> => {
+    if (useMockData) {
+      console.log('Using mock data for optimizer run');
+      return await mockRunOptimizer(request);
+    }
+    try {
+      const response = await api.post('/optimizer/run', request);
+      return response.data;
+    } catch (error) {
+      if (!useMockData && error.message && error.message.includes('Network Error')) {
+        console.log('Switching to mock mode for optimizer run');
+        useMockData = true; // Switch to mock data if backend fails
+        return await mockRunOptimizer(request);
+      }
+      throw error; // Re-throw other errors
+    }
+  },
+  // getOptimizationRun: async (runId: string): Promise<OptimizerResponse> => { ... } // Optional
 };
 
 export default api;

@@ -18,6 +18,61 @@ services:
       - DATA_DIR=data
       - WATCH_DIR=watch
     restart: unless-stopped
+    depends_on:
+      - db
+      - redis # Added redis dependency
+
+  redis:
+    image: redis:alpine
+    container_name: data-microservice-redis
+    ports:
+      - "6379:6379" # Optional: for external debugging
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  db:
+    image: postgres:13-alpine
+    container_name: data-microservice-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  celery_worker:
+    build: ./backend # Uses the same build context/image as the backend
+    container_name: data-microservice-celery-worker
+    command: celery -A app.celery_worker.celery_app worker -l info -P eventlet
+    volumes:
+      - ./backend:/app # Mount backend code
+      - ./data:/app/data # Mount data directory if worker needs direct access (e.g. for temp files)
+    environment:
+      # Share the same environment variables as the backend
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - DATA_DIR=data 
+      # Database and Celery config (ensure these are correctly picked up by settings.py in worker)
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # ALEMBIC_GENERATE_OFFLINE might not be needed for worker, but included for consistency if settings.py expects it
+      - ALEMBIC_GENERATE_OFFLINE=false 
+    depends_on:
+      - backend # Depends on backend for code, though not strictly a runtime dependency if image is self-contained
+      - db
+      - redis
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -31,3 +86,5 @@ services:
 volumes:
   data:
   watch:
+  postgres_data:
+  redis_data: # Added redis_data volume

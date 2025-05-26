@@ -1,6 +1,7 @@
 fastapi>=0.95.0
 uvicorn>=0.21.1
-pydantic>=1.10.7
+pydantic>=1.10.7 # Keep this for Pydantic v2 core functionality
+pydantic-settings>=0.2.0 # Add pydantic-settings
 python-multipart>=0.0.6
 pandas>=2.0.0
 numpy>=1.24.3
@@ -14,3 +15,8 @@ matplotlib>=3.7.1
 scikit-learn>=1.2.2
 pytest>=7.3.1
 httpx>=0.24.0
+sqlmodel>=0.0.8
+psycopg[binary]>=3.1.0 # Use psycopg for async
+alembic>=1.9.4
+aiosqlite>=0.17.0 # For async SQLite used in Alembic offline generation
+redis>=4.0.0 # For Celery broker and result backend

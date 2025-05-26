@@ -5,8 +5,10 @@ import DataVisualization from '../components/DataVisualization';
 import ProcessingPanel from '../components/ProcessingPanel';
 import AnnotationPanel from '../components/AnnotationPanel';
 import ExportPanel from '../components/ExportPanel';
+import { OptimizerPanel } from '../components/OptimizerPanel';
 import type { DataFile, ProcessingResult } from '../types';
 import useWebSocket from '../services/websocket';
+import { etlApi } from '../services/api'; // Added etlApi for fetching results
 import { v4 as uuidv4 } from 'uuid';
 
 const Dashboard: React.FC = () => {
@@ -25,16 +27,46 @@ const Dashboard: React.FC = () => {
       const latestMessage = messages[messages.length - 1];
 
       if (latestMessage.type === 'new_data') {
-        // Refresh file list when new data is available
-        handleRefresh();
-      } else if (latestMessage.type === 'processing_complete') {
-        // Update processing result if it matches the current file
-        if (selectedFile && latestMessage.data.data_file_id === selectedFile.id) {
-          setProcessingResult(latestMessage.data);
+        console.log('WebSocket: new_data received', latestMessage.data);
+        handleRefresh(); // Placeholder for actual file list refresh
+      } else if (latestMessage.type === 'etl_update') {
+        console.log('WebSocket: etl_update received', latestMessage.data);
+        const { data_file_id, processing_result_id, status } = latestMessage.data;
+        // If this update is for the currently selected file and there's a processing result ID
+        if (selectedFile && data_file_id === selectedFile.id && processing_result_id) {
+          // If the current processingResult matches or if we want to update to this new one.
+          // Also, ensure we don't re-set if the status is already final (COMPLETED/FAILED) unless it's a new result.
+          if (processingResult?.id !== processing_result_id || 
+              (processingResult?.id === processing_result_id && 
+               processingResult?.status !== 'COMPLETED' && 
+               processingResult?.status !== 'FAILED')) {
+            
+            etlApi.getResult(processing_result_id)
+              .then(updatedProcessingResult => {
+                setProcessingResult(updatedProcessingResult);
+                console.log('Processing result updated from etl_update:', updatedProcessingResult);
+              })
+              .catch(error => {
+                console.error('Error fetching updated processing result:', error);
+              });
+          }
+        }
+      } else if (latestMessage.type === 'annotation_update') {
+        console.log('WebSocket: annotation_update received', latestMessage.data);
+        const { data_file_id, annotation_id, action } = latestMessage.data;
+        if (selectedFile && data_file_id === selectedFile.id) {
+          // Annotation updates would typically trigger a refresh of the AnnotationPanel.
+          // This might involve AnnotationPanel having its own useEffect to refetch annotations
+          // when a 'refreshAnnotations' prop changes, or by directly calling a refetch function.
+          // For now, just logging. A simple way is to change a key on AnnotationPanel to force re-mount.
+          console.log(`Annotation ${action} for annotation_id: ${annotation_id} on data_file_id: ${data_file_id}`);
+          // Example: setAnnotationRefreshKey(prevKey => prevKey + 1); // if AnnotationPanel takes such a key
         }
       }
+      // Note: The old 'processing_complete' message type might be redundant if 'etl_update' covers it.
+      // If 'processing_complete' is still used by some backend parts (e.g. older websocket implementation), keep its handler or merge logic.
     }
-  }, [messages, selectedFile]);
+  }, [messages, selectedFile, processingResult]); // Added processingResult to dependencies
 
   const handleFileSelect = (file: DataFile) => {
     setSelectedFile(file);
@@ -109,6 +141,12 @@ const Dashboard: React.FC = () => {
               dataFile={selectedFile}
               onProcessingComplete={handleProcessingComplete}
             />
+            {processingResult && ( // Conditionally render OptimizerPanel if a processingResult is available
+              <OptimizerPanel
+                key={processingResult.id} // Add key to re-mount if processingResult changes
+                initialProcessingResultId={processingResult.id}
+              />
+            )}
             <ExportPanel processingResult={processingResult} />
           </div>
 
