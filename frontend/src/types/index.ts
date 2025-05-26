@@ -60,6 +60,7 @@ export interface ProcessingParameters {
   prominence?: number;
   width?: number;
   custom_params?: Record<string, any>;
+  custom_script_name?: string; // Added for custom processing type
 }
 
 export interface ProcessingResult {
@@ -72,6 +73,7 @@ export interface ProcessingResult {
   status: ProcessingStatus;
   created_at: string;
   updated_at: string;
+  task_id?: string; // Added for Celery task ID
 }
 
 export interface ProcessingResultList {
@@ -89,6 +91,20 @@ export enum AnnotationType {
   BASELINE_SHIFT = 'baseline_shift',
   NOISE = 'noise',
   CUSTOM = 'custom',
+}
+
+// Optimizer Interface Types
+export interface OptimizerRequest {
+  processing_result_id: string; // UUID
+  optimizer_params?: Record<string, any>;
+}
+
+export interface OptimizerResponse {
+  optimizer_run_id: string; // UUID
+  status: string;
+  input_processing_result_id: string; // UUID
+  results?: Record<string, any>;
+  message?: string;
 }
 
 export interface Annotation {
