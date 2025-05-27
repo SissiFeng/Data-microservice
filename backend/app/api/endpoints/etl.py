@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Response, Depends, Query
-from typing import List, Optional, Dict
+from litestar import Router, post, get, delete, Response, Parameter
+from litestar.exceptions import HTTPException
+from typing import Optional # Removed List, Dict as they are not directly used in type hints here
 import uuid
-from datetime import datetime
+# from datetime import datetime # Not directly used
 import pandas as pd
-import numpy as np
+# import numpy as np # Not directly used
 import json
 import os
 import io
@@ -16,72 +17,59 @@ from app.schemas.etl import (
     ProcessingStatus,
     ProcessingType
 )
-# ETL processors are now called within the Celery task
-# from app.etl.processors import rolling_mean, peak_detection, data_quality 
-# from app.services import s3_service # s3_service is used within the Celery task
-from app.core.config import settings
-from app.db.session import get_session, AsyncSession
+# from app.core.config import settings # Not directly used in this file
+from app.db.session import AsyncSession # get_session will be provided by dependency injection
 from app.db.models import ProcessingResult as DBProcessingResult
 from app.db.models import DataFile as DBDataFile
-from app.tasks import process_data_task # Import the Celery task
+from app.tasks import process_data_task
 
-router = APIRouter()
-
-# The old process_data_background_db function is removed as its logic is now in app.tasks.process_data_task
-
-@router.post("/process", response_model=ProcessingResponse)
-async def process_data(
-    request: ProcessingRequest,
-    # background_tasks: BackgroundTasks, # Removed BackgroundTasks
-    session: AsyncSession = Depends(get_session)
-):
+@post("/process")
+async def process_data_handler(
+    data: ProcessingRequest, # Changed 'request' to 'data' as per Litestar convention for request body
+    session: AsyncSession
+) -> ProcessingResponse:
     """
     Initiates data processing by creating a DBProcessingResult record 
     and dispatching a Celery task.
     """
-    db_data_file = await session.get(DBDataFile, request.data_file_id)
+    db_data_file = await session.get(DBDataFile, data.data_file_id)
     if not db_data_file:
-        raise HTTPException(status_code=404, detail=f"DataFile with ID {request.data_file_id} not found.")
+        raise HTTPException(status_code=404, detail=f"DataFile with ID {data.data_file_id} not found.")
 
     db_processing_result = DBProcessingResult(
-        data_file_id=request.data_file_id,
-        processing_type=request.processing_type.value,
-        parameters=request.parameters.dict(exclude_none=True) if request.parameters else {}, # Ensure exclude_none
+        data_file_id=data.data_file_id,
+        processing_type=data.processing_type.value,
+        parameters=data.parameters.model_dump(exclude_none=True) if data.parameters else {}, # Use model_dump
         status=ProcessingStatus.PENDING.value,
     )
     session.add(db_processing_result)
     await session.commit()
     await session.refresh(db_processing_result)
 
-    # Dispatch Celery task
     task = process_data_task.delay(
         processing_id=db_processing_result.id,
-        data_file_id=request.data_file_id,
-        processing_type_value=request.processing_type.value, # Pass enum value
+        data_file_id=data.data_file_id,
+        processing_type_value=data.processing_type.value,
         parameters=db_processing_result.parameters
     )
 
-    # Update the DB record with the task_id
     db_processing_result.task_id = task.id
     session.add(db_processing_result)
     await session.commit()
     await session.refresh(db_processing_result)
     
-    # Return the ProcessingResponse, which now includes task_id
-    # The schema ProcessingResponse should already include all fields from DBProcessingResult
-    # or be able to serialize it correctly (e.g. if it's a SQLModel itself with from_orm=True)
-    return db_processing_result
+    return ProcessingResponse.model_validate(db_processing_result)
 
 
-@router.get("/results", response_model=ProcessingResultList)
-async def list_processing_results(
-    data_file_id: Optional[uuid.UUID] = Query(None, description="Filter by DataFile ID"),
-    processing_type: Optional[ProcessingType] = Query(None, description="Filter by Processing Type"),
-    status: Optional[ProcessingStatus] = Query(None, description="Filter by Status"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
-    session: AsyncSession = Depends(get_session)
-):
+@get("/results")
+async def list_processing_results_handler(
+    session: AsyncSession,
+    data_file_id: Optional[uuid.UUID] = Parameter(default=None, query="data_file_id", required=False, description="Filter by DataFile ID"),
+    processing_type: Optional[ProcessingType] = Parameter(default=None, query="processing_type", required=False, description="Filter by Processing Type"),
+    status: Optional[ProcessingStatus] = Parameter(default=None, query="status", required=False, description="Filter by Status"),
+    skip: int = Parameter(default=0, query="skip", ge=0),
+    limit: int = Parameter(default=100, query="limit", ge=1, le=500)
+) -> ProcessingResultList:
     """
     List processing results from the database with optional filtering.
     """
@@ -103,72 +91,51 @@ async def list_processing_results(
     if total_count is None: total_count = 0
         
     statement = statement.offset(skip).limit(limit).order_by(DBProcessingResult.created_at.desc())
-    results = await session.exec(statement)
-    items = results.scalars().all()
-    
-    return {"total": total_count, "items": items}
+    results_exec = await session.exec(statement)
+    items_db = results_exec.scalars().all()
 
-@router.get("/results/{processing_id}", response_model=ProcessingResponse)
-async def get_processing_result(
-    processing_id: uuid.UUID, # Path parameter is UUID
-    session: AsyncSession = Depends(get_session)
-):
+    items_response = [ProcessingResponse.model_validate(item) for item in items_db]
+    
+    return ProcessingResultList(total=total_count, items=items_response)
+
+@get("/{processing_id:uuid}")
+async def get_processing_result_handler(
+    processing_id: uuid.UUID,
+    session: AsyncSession
+) -> ProcessingResponse:
     """
     Get a specific processing result by ID from the database.
     """
     db_processing_result = await session.get(DBProcessingResult, processing_id)
     if not db_processing_result:
         raise HTTPException(status_code=404, detail="Processing result not found")
-    return db_processing_result
+    return ProcessingResponse.model_validate(db_processing_result)
 
-@router.delete("/results/{processing_id}", status_code=204)
-async def delete_processing_result(
+@delete("/{processing_id:uuid}", status_code=204)
+async def delete_processing_result_handler(
     processing_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session)
-):
+    session: AsyncSession
+) -> None:
     """
     Delete a processing result by ID.
-    (Note: This does not delete associated files from S3 or local disk if any result_data pointed to them)
     """
     db_processing_result = await session.get(DBProcessingResult, processing_id)
     if not db_processing_result:
         raise HTTPException(status_code=404, detail="Processing result not found")
-
-    # If result_data contains paths to files that need cleanup, that logic would go here.
-    # For example, if result_data = {"result_file_path": "path/to/file.json"}
-    # if db_processing_result.result_data and "result_file_path" in db_processing_result.result_data:
-    #     file_to_delete = db_processing_result.result_data["result_file_path"]
-    #     if os.path.exists(file_to_delete): # Or s3_service.delete_file if it's an S3 key
-    #         os.remove(file_to_delete) # Or s3_service.delete_file
 
     await session.delete(db_processing_result)
     await session.commit()
     return None
 
 
-# The /results/{processing_id}/export endpoint is more complex as it involves
-# re-running or interpreting stored results to generate an exportable file.
-# This typically requires knowledge of the original data and processing steps.
-# Given the current DBProcessingResult model stores `result_data` as JSON,
-# exporting might mean formatting this JSON or, if it's summary data,
-# the export might not be a direct re-creation of a processed DataFrame.
-# For this refactor, I will simplify or remove the export endpoint if it's too complex
-# to adapt without significant changes to ETL processors or data storage strategy.
-# The original export logic heavily relied on in-memory structures and local file paths.
-# Re-implementing it to work with S3-stored original files and JSON results in DB
-# would require significant changes.
-# I will provide a placeholder for the export endpoint, noting it needs more work.
-
-@router.get("/results/{processing_id}/export")
-async def export_processing_result(
+@get("/{processing_id:uuid}/export")
+async def export_processing_result_handler(
     processing_id: uuid.UUID,
-    format: str = Query("json", description="Export format: 'json' or 'csv' (csv might be limited by stored data)"),
-    session: AsyncSession = Depends(get_session)
-):
+    session: AsyncSession,
+    format: str = Parameter(default="json", query="format", description="Export format: 'json' or 'csv'")
+) -> Response:
     """
     Export a processing result.
-    JSON export will return the 'result_data' field.
-    CSV export is more complex and might only be feasible if 'result_data' is tabular.
     """
     db_processing_result = await session.get(DBProcessingResult, processing_id)
     if not db_processing_result:
@@ -188,43 +155,49 @@ async def export_processing_result(
     export_filename = f"{original_filename_base}_{db_processing_result.processing_type}_{processing_id}.{format.lower()}"
 
     if format.lower() == "json":
+        content = json.dumps(db_processing_result.result_data, indent=2)
         return Response(
-            content=json.dumps(db_processing_result.result_data, indent=2),
+            content=content,
             media_type="application/json",
             headers={"Content-Disposition": f"attachment; filename={export_filename}"}
         )
     
     elif format.lower() == "csv":
-        # CSV export is only meaningful if result_data is a list of dicts (tabular)
-        # or can be converted to a pandas DataFrame.
-        # This is a simplified example; more robust conversion might be needed.
-        if isinstance(db_processing_result.result_data, list) and \
-           all(isinstance(item, dict) for item in db_processing_result.result_data):
+        result_data = db_processing_result.result_data
+        data_to_export = None
+
+        if isinstance(result_data, list) and all(isinstance(item, dict) for item in result_data):
+            data_to_export = result_data
+        elif isinstance(result_data, dict) and "sample_data" in result_data and isinstance(result_data["sample_data"], list):
+            data_to_export = result_data["sample_data"]
+            export_filename = f"sample_{export_filename}" # Prepend sample to filename
+
+        if data_to_export is not None:
             try:
-                df_to_export = pd.DataFrame(db_processing_result.result_data)
+                df_to_export = pd.DataFrame(data_to_export)
                 output = io.StringIO()
                 df_to_export.to_csv(output, index=False)
+                csv_content = output.getvalue()
                 return Response(
-                    content=output.getvalue(),
+                    content=csv_content,
                     media_type="text/csv",
                     headers={"Content-Disposition": f"attachment; filename={export_filename}"}
                 )
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to convert result_data to CSV: {str(e)}")
-        elif isinstance(db_processing_result.result_data, dict) and "sample_data" in db_processing_result.result_data and isinstance(db_processing_result.result_data["sample_data"], list) :
-             try: # Attempt to export sample_data if main result_data is not directly tabular
-                df_to_export = pd.DataFrame(db_processing_result.result_data["sample_data"])
-                output = io.StringIO()
-                df_to_export.to_csv(output, index=False)
-                return Response(
-                    content=output.getvalue(),
-                    media_type="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=sample_{export_filename}"}
-                )
-             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to convert sample_data to CSV: {str(e)}")
         else:
             raise HTTPException(status_code=400, detail="CSV export not suitable for the format of result_data.")
             
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {format}. Try 'json' or 'csv'.")
+
+etl_router = Router(
+    path="/etl", 
+    route_handlers=[
+        process_data_handler,
+        list_processing_results_handler,
+        get_processing_result_handler,
+        delete_processing_result_handler,
+        export_processing_result_handler,
+    ]
+)

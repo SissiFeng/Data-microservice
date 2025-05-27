@@ -25,7 +25,7 @@ A modern microservice for data processing, visualization, and analysis with a fo
 The application follows a microservice architecture with:
 
 - **Frontend**: React + TypeScript application with modern UI components.
-- **Backend**: Python FastAPI service for data processing and storage.
+- **Backend**: Python Litestar service for data processing and storage.
 - **Database**: PostgreSQL, managed with SQLModel (ORM) and Alembic for migrations.
 - **File Storage**: Local or S3-compatible storage for data files.
 - **Message Broker**: Redis (for Celery).
@@ -98,8 +98,8 @@ The application follows a microservice architecture with:
     # Apply database migrations
     alembic upgrade head
     
-    # Start the FastAPI backend (e.g., in one terminal)
-    python run.py # or uvicorn app.main:app --reload
+    # Start the Litestar backend (e.g., in one terminal)
+    python run.py # This script now uses 'litestar run --reload'
 
     # Start the Celery worker (e.g., in another terminal, from the 'backend' directory)
     # Ensure your virtual environment is activated
@@ -173,7 +173,7 @@ The ETL (Extract, Transform, Load) components are the core of the data processin
 (As previously described)
 
 ## API Documentation
-The backend API documentation (Swagger UI) is available at `http://localhost:8000/docs` when the backend is running. This includes endpoints for data, ETL, annotations, and the new `/api/optimizer`.
+The backend API documentation (Swagger UI) is available at `http://localhost:8000/schema/swagger` when the backend is running. Redoc documentation is available at `/schema/redoc`. This includes endpoints for data, ETL, annotations, and the new `/api/optimizer`.
 
 ## Contributing
 (As previously described)

@@ -1,59 +1,47 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import List, Optional
+from litestar import Router, post, get, put, delete, Parameter
+from litestar.exceptions import HTTPException
+from typing import Optional # Removed List as it's not directly used in type hints
 import uuid
-from datetime import datetime
-from sqlmodel import select, func # Added select and func
+from datetime import datetime # Keep for potential use, though updated_at is removed for now
+from sqlmodel import select, func
 
 from app.schemas.annotations import (
     AnnotationCreate,
     AnnotationUpdate,
-    AnnotationResponse, # Assuming this is the read schema
-    AnnotationList    # For listing multiple annotations
-    # AnnotationType # This was used for filtering, can be added if field exists in DB model
+    AnnotationResponse,
+    AnnotationList
+    # AnnotationType
 )
-# Removed imports for data_files and processing_results from other endpoints
-from app.db.session import get_session, AsyncSession
-from app.db.models import Annotation as DBAnnotation # Renamed to DBAnnotation
-from app.db.models import DataFile as DBDataFile     # To validate data_file_id
-from app.api.endpoints.websocket import notify_clients # Added for WebSocket notifications
+from app.db.session import AsyncSession # get_session will be provided by dependency injection
+from app.db.models import Annotation as DBAnnotation
+from app.db.models import DataFile as DBDataFile
+from app.api.endpoints.websocket import notify_clients
 
-router = APIRouter()
-
-# In-memory 'annotations' dictionary is now removed.
-
-@router.post("/", response_model=AnnotationResponse)
-async def create_annotation(
-    annotation_create: AnnotationCreate, 
-    session: AsyncSession = Depends(get_session)
-):
+@post("/")
+async def create_annotation_handler(
+    data: AnnotationCreate, 
+    session: AsyncSession
+) -> AnnotationResponse:
     """
     Create a new annotation for a data file.
     """
-    # Validate data file exists
-    db_data_file = await session.get(DBDataFile, annotation_create.data_file_id)
+    db_data_file = await session.get(DBDataFile, data.data_file_id)
     if not db_data_file:
-        raise HTTPException(status_code=404, detail=f"DataFile with id {annotation_create.data_file_id} not found")
-
-    # The DBAnnotation model (previously defined in models.py) has fields:
-    # id, data_file_id, timestamp_start, timestamp_end, annotation_type, label, description, created_at
-    # AnnotationCreate schema has:
-    # data_file_id, timestamp_start, timestamp_end, annotation_type, label, description (Optional)
+        raise HTTPException(status_code=404, detail=f"DataFile with id {data.data_file_id} not found")
 
     db_annotation = DBAnnotation(
-        data_file_id=annotation_create.data_file_id,
-        timestamp_start=annotation_create.timestamp_start,
-        timestamp_end=annotation_create.timestamp_end,
-        annotation_type=annotation_create.annotation_type,
-        label=annotation_create.label,
-        description=annotation_create.description
-        # id and created_at are set by default by the model/DB
+        data_file_id=data.data_file_id,
+        timestamp_start=data.timestamp_start,
+        timestamp_end=data.timestamp_end,
+        annotation_type=data.annotation_type,
+        label=data.label,
+        description=data.description
     )
     
     session.add(db_annotation)
     await session.commit()
     await session.refresh(db_annotation)
     
-    # Notify clients
     await notify_clients(
         event_type="annotation_update", 
         data={
@@ -63,17 +51,16 @@ async def create_annotation(
         }
     )
     
-    return db_annotation
+    return AnnotationResponse.model_validate(db_annotation)
 
-@router.get("/", response_model=AnnotationList)
-async def list_annotations(
-    data_file_id: Optional[uuid.UUID] = Query(None, description="Filter annotations by DataFile ID"),
-    # processing_result_id: Optional[str] = None, # ProcessingResult not part of DBAnnotation model yet
-    # annotation_type: Optional[AnnotationType] = None, # AnnotationType enum not used directly here yet
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
-    session: AsyncSession = Depends(get_session)
-):
+@get("/")
+async def list_annotations_handler(
+    session: AsyncSession,
+    data_file_id: Optional[uuid.UUID] = Parameter(default=None, query="data_file_id", required=False, description="Filter annotations by DataFile ID"),
+    # annotation_type: Optional[AnnotationType] = Parameter(default=None, query="annotation_type", required=False), # If filtering by type is needed
+    skip: int = Parameter(default=0, query="skip", ge=0),
+    limit: int = Parameter(default=100, query="limit", ge=1, le=500)
+) -> AnnotationList:
     """
     List annotations with optional filtering by data_file_id.
     """
@@ -84,7 +71,7 @@ async def list_annotations(
         statement = statement.where(DBAnnotation.data_file_id == data_file_id)
         count_statement = count_statement.where(DBAnnotation.data_file_id == data_file_id)
     
-    # if annotation_type: # Add if 'annotation_type' string field needs filtering
+    # if annotation_type:
     #     statement = statement.where(DBAnnotation.annotation_type == annotation_type.value)
     #     count_statement = count_statement.where(DBAnnotation.annotation_type == annotation_type.value)
 
@@ -95,33 +82,35 @@ async def list_annotations(
         
     statement = statement.offset(skip).limit(limit).order_by(DBAnnotation.created_at.desc())
     
-    results = await session.exec(statement)
-    annotations_list = results.scalars().all()
+    results_exec = await session.exec(statement)
+    annotations_db = results_exec.scalars().all()
     
-    return {
-        "total": total_count,
-        "items": annotations_list
-    }
+    items_response = [AnnotationResponse.model_validate(ann) for ann in annotations_db]
+    
+    return AnnotationList(
+        total=total_count,
+        items=items_response
+    )
 
-@router.get("/{annotation_id}", response_model=AnnotationResponse)
-async def get_annotation(
-    annotation_id: uuid.UUID, # Path parameter is UUID
-    session: AsyncSession = Depends(get_session)
-):
+@get("/{annotation_id:uuid}")
+async def get_annotation_handler(
+    annotation_id: uuid.UUID,
+    session: AsyncSession
+) -> AnnotationResponse:
     """
     Get a specific annotation by ID.
     """
     db_annotation = await session.get(DBAnnotation, annotation_id)
     if not db_annotation:
         raise HTTPException(status_code=404, detail="Annotation not found")
-    return db_annotation
+    return AnnotationResponse.model_validate(db_annotation)
 
-@router.put("/{annotation_id}", response_model=AnnotationResponse)
-async def update_annotation(
+@put("/{annotation_id:uuid}")
+async def update_annotation_handler(
     annotation_id: uuid.UUID,
-    annotation_update: AnnotationUpdate,
-    session: AsyncSession = Depends(get_session)
-):
+    data: AnnotationUpdate,
+    session: AsyncSession
+) -> AnnotationResponse:
     """
     Update an existing annotation.
     """
@@ -129,23 +118,16 @@ async def update_annotation(
     if not db_annotation:
         raise HTTPException(status_code=404, detail="Annotation not found")
     
-    update_data = annotation_update.dict(exclude_unset=True)
+    update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_annotation, key, value)
     
-    # The DBAnnotation model does not have 'updated_at' automatically updated by SQLModel/SQLAlchemy
-    # on every update unless a DB-level trigger or specific event listener is set.
-    # For application-level timestamp, set it manually:
-    db_annotation.updated_at = datetime.utcnow() # Assuming DBAnnotation model has an 'updated_at' field.
-                                                # The current DBAnnotation model in previous steps did not have updated_at.
-                                                # If it's required, it should be added to the model.
-                                                # For now, I'll assume it's NOT in the model as per earlier definition.
+    # Removed: db_annotation.updated_at = datetime.utcnow() as per instructions
 
     session.add(db_annotation)
     await session.commit()
     await session.refresh(db_annotation)
     
-    # Notify clients
     await notify_clients(
         event_type="annotation_update", 
         data={
@@ -155,13 +137,13 @@ async def update_annotation(
         }
     )
     
-    return db_annotation
+    return AnnotationResponse.model_validate(db_annotation)
 
-@router.delete("/{annotation_id}", status_code=204) # Return 204 No Content on success
-async def delete_annotation(
+@delete("/{annotation_id:uuid}", status_code=204)
+async def delete_annotation_handler(
     annotation_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session)
-):
+    session: AsyncSession
+) -> None:
     """
     Delete an annotation by ID.
     """
@@ -169,14 +151,12 @@ async def delete_annotation(
     if not db_annotation:
         raise HTTPException(status_code=404, detail="Annotation not found")
     
-    # Store data_file_id before deleting for notification
     data_file_id_for_notification = str(db_annotation.data_file_id)
     annotation_id_for_notification = str(db_annotation.id)
 
     await session.delete(db_annotation)
     await session.commit()
     
-    # Notify clients
     await notify_clients(
         event_type="annotation_update", 
         data={
@@ -187,4 +167,15 @@ async def delete_annotation(
         }
     )
     
-    return None # FastAPI returns 204 No Content
+    return None
+
+annotations_router = Router(
+    path="/annotations", 
+    route_handlers=[
+        create_annotation_handler,
+        list_annotations_handler,
+        get_annotation_handler,
+        update_annotation_handler,
+        delete_annotation_handler,
+    ]
+)

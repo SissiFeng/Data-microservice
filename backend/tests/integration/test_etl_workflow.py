@@ -1,8 +1,8 @@
 import pytest
 import asyncio
 import uuid
-from httpx import AsyncClient # TestClient uses AsyncClient
-from fastapi import status # For status codes
+from litestar.testing import TestClient # Changed from httpx import AsyncClient
+from litestar import status # Changed from fastapi import status
 
 from app.schemas.etl import ProcessingStatus, ProcessingType
 from app.db.models import DataFile as DBDataFile, ProcessingResult as DBProcessingResult
@@ -11,8 +11,8 @@ from app.db.models import DataFile as DBDataFile, ProcessingResult as DBProcessi
 pytestmark = pytest.mark.asyncio
 
 async def test_upload_trigger_etl_and_get_result(
-    test_client: AsyncClient, 
-    db_session: AsyncClient, # db_session is actually an AsyncSession, typo in description
+    test_client: TestClient, # Changed from AsyncClient
+    db_session: AsyncClient, # db_session is actually an AsyncSession, typo in description - keeping as is per instruction
     sample_csv_file: tuple[str, bytes]
 ):
     """

@@ -2,13 +2,13 @@ import asyncio
 import os
 import pytest
 import pytest_asyncio
-from typing import AsyncGenerator, Generator
-from httpx import AsyncClient
+from typing import AsyncGenerator, Generator # Keep AsyncGenerator for async fixtures
+from litestar.testing import TestClient # Changed from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from app.main import app # Main FastAPI app
+from app.main import app # Main Litestar app (ensure this is the Litestar app instance)
 from app.core.config import settings
 from app.db.session import get_session # Original get_session dependency
 
@@ -75,12 +75,20 @@ async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
     async with TestAsyncSessionLocal() as session:
         yield session
 
-app.dependency_overrides[get_session] = override_get_session
+# app.dependency_overrides[get_session] = override_get_session # Removed global override
 
-@pytest_asyncio.fixture(scope="function")
-async def test_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
-    """Yield an AsyncClient for making requests to the FastAPI app."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+@pytest.fixture(scope="function") # Changed to pytest.fixture for non-async TestClient
+def test_client(db_session: AsyncSession) -> Generator[TestClient, None, None]: # Return type TestClient
+    """Yield a TestClient for making requests to the Litestar app."""
+    # Note: TestClient is synchronous, but it can call async endpoints.
+    # If db_session fixture itself needs to be async setup for each test,
+    # and TestClient needs it, this setup is fine.
+    # The override_get_session is async, TestClient handles this.
+    with TestClient(
+        app=app, 
+        base_url="http://test",
+        dependencies={get_session: override_get_session} # Pass override here
+    ) as client:
         yield client
 
 # --- Mock S3 Service ---
