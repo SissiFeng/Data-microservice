@@ -45,29 +45,44 @@ The application follows a microservice architecture with:
 
 #### Using Docker (Recommended)
 
+Docker Compose spins up the entire stack (backend, Celery worker, database, Redis and frontend) in a single command.
+Ensure Docker and the compose plugin are installed and working:
+
+```bash
+docker --version
+docker compose version  # or `docker-compose --version`
+```
+
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/yourusername/data-microservice.git # Replace with actual repo URL
+    git clone https://github.com/yourusername/data-microservice.git  # Replace with the actual repo URL
     cd data-microservice
     ```
 
-2.  Create a `.env` file from `.env.example` and populate it with your AWS credentials (if using S3) and desired PostgreSQL settings (e.g., `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`). Celery and Redis settings will use defaults if not specified.
+2.  Copy `.env.example` to `.env` and fill in your database and optional S3 credentials:
     ```bash
     cp .env.example .env
-    # nano .env  (or your preferred editor to fill in details)
+    # edit .env with your credentials
     ```
 
-3.  Start the services:
+3.  Build and start the services:
     ```bash
-    docker-compose up -d --build
+    docker compose up -d --build
     ```
-    This command starts the frontend, backend, PostgreSQL database, Redis message broker, and Celery worker services.
-    Database migrations (Alembic) should be applied automatically by the backend service on startup. If you need to run them manually after services are up:
+    Database migrations are applied automatically. If needed you can run them manually:
     ```bash
-    docker-compose exec backend alembic upgrade head
+    docker compose exec backend alembic upgrade head
     ```
 
-4.  Access the application at `http://localhost` (frontend) and the backend API at `http://localhost:8000`.
+4.  Verify the containers are running:
+    ```bash
+    docker compose ps
+    ```
+    Logs can be inspected with `docker compose logs -f backend`.
+
+5.  The frontend will be available at `http://localhost` and the backend API at `http://localhost:8000`.
+
+For a step-by-step walkthrough see [docs/docker_setup.md](docs/docker_setup.md).
 
 #### Manual Setup
 
