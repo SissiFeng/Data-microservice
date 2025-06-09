@@ -9,7 +9,12 @@ import pandas as pd
 
 from app.core.config import settings
 from app.schemas.data import DataStatus, DataMetadata, DataSource
-from app.api.endpoints.data import data_files
+import asyncio
+from sqlalchemy.orm import sessionmaker
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.db.session import engine
+from app.db.models import DataFile as DBDataFile
 from app.services import s3_service
 
 class DataFileHandler(FileSystemEventHandler):
@@ -157,33 +162,42 @@ class DataFileHandler(FileSystemEventHandler):
                 print(f"Error copying file to data directory: {str(e)}")
                 return
 
-            # Create data file record
-            data_file = {
-                "id": file_id,
-                "filename": filename,
-                "filepath": dest_path,
-                "s3_key": None,
-                "metadata": metadata.dict(),
-                "status": DataStatus.PENDING,
-                "created_at": datetime.now(),
-                "updated_at": datetime.now()
-            }
-
-            # Store in memory (replace with database in production)
-            data_files[file_id] = data_file
-
             # Upload to S3 if configured
+            s3_key = None
             if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
                 try:
                     s3_key = f"raw/{file_id}/{filename}"
                     s3_upload_success = s3_service.upload_file(dest_path, s3_key)
                     if s3_upload_success:
-                        data_files[file_id]["s3_key"] = s3_key
                         print(f"Successfully uploaded {filename} to S3 with key: {s3_key}")
                     else:
                         print(f"Failed to upload {filename} to S3")
+                        s3_key = None
                 except Exception as e:
                     print(f"Error uploading to S3: {str(e)}")
+                    s3_key = None
+
+            async def create_record():
+                async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+                async with async_session() as session:
+                    db_obj = DBDataFile(
+                        filename=filename,
+                        s3_path=s3_key,
+                        file_metadata=metadata.dict()
+                    )
+                    session.add(db_obj)
+                    await session.commit()
+                    await session.refresh(db_obj)
+                    return db_obj
+
+            try:
+                asyncio.run(create_record())
+            finally:
+                if os.path.exists(dest_path):
+                    try:
+                        os.remove(dest_path)
+                    except Exception as e:
+                        print(f"Error deleting temporary file {dest_path}: {str(e)}")
 
             print(f"Processed new file: {filename} (ID: {file_id})")
 
