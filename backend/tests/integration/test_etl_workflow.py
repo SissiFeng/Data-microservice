@@ -1,7 +1,8 @@
 import pytest
 import asyncio
 import uuid
-from httpx import AsyncClient # TestClient uses AsyncClient
+from httpx import AsyncClient  # TestClient uses AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import status # For status codes
 
 from app.schemas.etl import ProcessingStatus, ProcessingType
@@ -11,8 +12,8 @@ from app.db.models import DataFile as DBDataFile, ProcessingResult as DBProcessi
 pytestmark = pytest.mark.asyncio
 
 async def test_upload_trigger_etl_and_get_result(
-    test_client: AsyncClient, 
-    db_session: AsyncClient, # db_session is actually an AsyncSession, typo in description
+    test_client: AsyncClient,
+    db_session: AsyncSession,
     sample_csv_file: tuple[str, bytes]
 ):
     """
