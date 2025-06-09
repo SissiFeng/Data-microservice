@@ -1,8 +1,9 @@
 import pytest
 import asyncio
 import uuid
-from httpx import AsyncClient # TestClient uses AsyncClient
-from fastapi import status # For status codes
+from httpx import AsyncClient  # TestClient uses AsyncClient
+from fastapi import status  # For status codes
+from app.db.session import AsyncSession
 
 from app.schemas.etl import ProcessingStatus, ProcessingType
 from app.db.models import DataFile as DBDataFile, ProcessingResult as DBProcessingResult
@@ -11,9 +12,9 @@ from app.db.models import DataFile as DBDataFile, ProcessingResult as DBProcessi
 pytestmark = pytest.mark.asyncio
 
 async def test_upload_trigger_etl_and_get_result(
-    test_client: AsyncClient, 
-    db_session: AsyncClient, # db_session is actually an AsyncSession, typo in description
-    sample_csv_file: tuple[str, bytes]
+    test_client: AsyncClient,
+    db_session: AsyncSession,
+    sample_csv_file: tuple[str, bytes],
 ):
     """
     Integration test for the full ETL workflow:
@@ -36,13 +37,8 @@ async def test_upload_trigger_etl_and_get_result(
     assert uuid.UUID(data_file_id) # Check if it's a valid UUID
 
     # Verify DataFile record in DB (optional, but good for sanity)
-    # Note: db_session is an AsyncSession from conftest.py, not AsyncClient
-    # The fixture name in the function signature should match the one in conftest.py
-    # Let's assume the fixture 'db_session' provides an AsyncSession.
     
     # Re-fetch from DB to ensure it's committed
-    # (This step requires db_session to be an actual AsyncSession, will adjust if needed)
-    # For now, we trust the API response. If direct DB check needed, ensure fixture provides AsyncSession.
     # db_datafile_record = await db_session.get(DBDataFile, uuid.UUID(data_file_id))
     # assert db_datafile_record is not None
     # assert db_datafile_record.filename == filename
@@ -129,17 +125,12 @@ async def test_upload_trigger_etl_and_get_result(
         if len(sample_output) >= 2:
              assert sample_output[1]['value1_rolling_mean_3'] == pytest.approx(2.0)
 
-    print(f"Successfully tested ETL workflow for data_file_id: {data_file_id}, processing_result_id: {processing_result_id}")
+    # Confirm persisted result in the database
+    db_processing_result = await db_session.get(DBProcessingResult, uuid.UUID(processing_result_id))
+    assert db_processing_result is not None
+    assert db_processing_result.status == ProcessingStatus.COMPLETED.value
+    assert db_processing_result.result_data is not None
 
-# Note: The db_session fixture in the test signature 'test_upload_trigger_etl_and_get_result'
-# was described as AsyncClient but it's actually an AsyncSession from conftest.py.
-# I've used it as if it's an AsyncSession for direct DB checks but commented out that part
-# for this test, as the primary interaction is via the API (TestClient).
-# If direct DB validation after API calls is needed, ensure the 'db_session' fixture
-# is correctly typed and used as an AsyncSession. The conftest.py provides it as AsyncSession.
-# So, the type hint in the test function should be `db_session: AsyncSession`.
-# I have corrected the type hint in my mental model for the test case.
-# The test above relies only on the test_client for API interaction, which is fine for this integration test.
-# The direct DB check lines were commented out as they are optional and require careful fixture usage.
-# The current `db_session` fixture in conftest.py is indeed an `AsyncSession`, so it could be used if needed.
-# For this test, the API-based polling and result verification is sufficient.
+    print(
+        f"Successfully tested ETL workflow for data_file_id: {data_file_id}, processing_result_id: {processing_result_id}"
+    )
