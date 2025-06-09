@@ -9,8 +9,12 @@ import pandas as pd
 
 from app.core.config import settings
 from app.schemas.data import DataStatus, DataMetadata, DataSource
-from app.api.endpoints.data import data_files
 from app.services import s3_service
+from app.db.session import engine
+from app.db.models import DataFile as DBDataFile
+from sqlalchemy.orm import sessionmaker
+from sqlmodel.ext.asyncio.session import AsyncSession
+import asyncio
 
 class DataFileHandler(FileSystemEventHandler):
     def __init__(self):
@@ -157,38 +161,37 @@ class DataFileHandler(FileSystemEventHandler):
                 print(f"Error copying file to data directory: {str(e)}")
                 return
 
-            # Create data file record
-            data_file = {
-                "id": file_id,
-                "filename": filename,
-                "filepath": dest_path,
-                "s3_key": None,
-                "metadata": metadata.dict(),
-                "status": DataStatus.PENDING,
-                "created_at": datetime.now(),
-                "updated_at": datetime.now()
-            }
-
-            # Store in memory (replace with database in production)
-            data_files[file_id] = data_file
-
+            s3_key = None
             # Upload to S3 if configured
             if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
                 try:
                     s3_key = f"raw/{file_id}/{filename}"
                     s3_upload_success = s3_service.upload_file(dest_path, s3_key)
                     if s3_upload_success:
-                        data_files[file_id]["s3_key"] = s3_key
                         print(f"Successfully uploaded {filename} to S3 with key: {s3_key}")
                     else:
                         print(f"Failed to upload {filename} to S3")
                 except Exception as e:
                     print(f"Error uploading to S3: {str(e)}")
 
+            async def _save_record():
+                async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+                async with async_session() as session:
+                    db_entry = DBDataFile(
+                        id=file_id,
+                        filename=filename,
+                        s3_path=s3_key,
+                        file_metadata=metadata.dict(),
+                    )
+                    session.add(db_entry)
+                    await session.commit()
+
+            asyncio.run(_save_record())
+
             print(f"Processed new file: {filename} (ID: {file_id})")
 
             # Notify via WebSocket (to be implemented)
-            # await notify_clients("new_data", data_file)
+            # await notify_clients("new_data", {"id": file_id, "filename": filename})
 
         except Exception as e:
             print(f"Error processing file {file_path}: {str(e)}")

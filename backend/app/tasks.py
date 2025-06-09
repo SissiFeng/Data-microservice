@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Dict, Any
 import os
 import pandas as pd
-import importlib # For dynamic custom script loading
+import numpy as np
+import importlib  # For dynamic custom script loading
 
 from app.celery_worker import celery_app
 from app.core.config import settings

@@ -21,7 +21,7 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 # Import your models here so that SQLModel.metadata is populated
-from backend.app.db import models # noqa
+from app.db import models  # noqa
 from sqlmodel import SQLModel
 target_metadata = SQLModel.metadata
 
@@ -44,7 +44,7 @@ def run_migrations_offline() -> None:
 
     """
     # Use DATABASE_URL from settings for offline mode
-    from backend.app.core.config import settings
+    from app.core.config import settings
     url = settings.DATABASE_URL
     context.configure(
         url=url,
@@ -70,7 +70,7 @@ async def run_async_migrations() -> None:
 
     """
     # Import settings here to access DATABASE_URL
-    from backend.app.core.config import settings
+    from app.core.config import settings
 
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}), # This will still read from alembic.ini for other params

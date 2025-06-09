@@ -2,7 +2,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from backend.app.core.config import settings
+from app.core.config import settings
 
 # Create the async engine
 # echo=True is for logging SQL statements, can be removed in production
@@ -30,7 +30,7 @@ async def create_db_and_tables():
     # Import all models here so that SQLModel.metadata knows about them
     # This is crucial for create_all to work correctly.
     # Adjust the import path if your models are elsewhere.
-    from backend.app.db import models  # noqa
+    from app.db import models  # noqa
 
     async with engine.begin() as conn:
         # await conn.run_sync(SQLModel.metadata.drop_all) # Use with caution: drops all tables
